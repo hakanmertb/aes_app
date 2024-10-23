@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/cupertino.dart';
@@ -20,11 +21,12 @@ class AESMediaPage extends StatefulWidget {
 class _AESMediaPageState extends State<AESMediaPage> {
   final AESService _aesService = AESService(keySize: 128);
   String _selectedMediaPath = '';
-  File? _previewImage;
-  File? _outputFile;
+  File? _normalPreview;
+  bool _isEncryptedMedia = false;
+  File? _encryptedFile;
+  File? _decryptedPreview;
   int _selectedSecurityLevel = 128;
   final List<Map<String, Uint8List>> _selectedDataSources = [];
-  bool _showEncryptedPreview = false;
   bool _isProcessing = false;
 
   @override
@@ -59,12 +61,22 @@ class _AESMediaPageState extends State<AESMediaPage> {
                 _buildSourcesCard(),
                 const SizedBox(height: 16),
                 _buildMediaCard(),
-                if (_previewImage != null || _outputFile != null)
+                if (_normalPreview != null) ...[
                   const SizedBox(height: 16),
-                if (_previewImage != null && !_showEncryptedPreview)
-                  _buildPreviewCard(),
-                if (_outputFile != null && _showEncryptedPreview)
-                  _buildOutputCard(),
+                  _buildNormalPreviewCard(),
+                ],
+                if (_isEncryptedMedia) ...[
+                  const SizedBox(height: 16),
+                  _buildEncryptedMediaCard(),
+                ],
+                if (_encryptedFile != null) ...[
+                  const SizedBox(height: 16),
+                  _buildEncryptedDataCard(),
+                ],
+                if (_decryptedPreview != null) ...[
+                  const SizedBox(height: 16),
+                  _buildDecryptedPreviewCard(),
+                ],
                 const SizedBox(height: 16),
                 _buildActionButtons(),
               ],
@@ -310,7 +322,7 @@ class _AESMediaPageState extends State<AESMediaPage> {
     );
   }
 
-  Widget _buildPreviewCard() {
+  Widget _buildNormalPreviewCard() {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -320,7 +332,7 @@ class _AESMediaPageState extends State<AESMediaPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Önizleme',
+              'Medya Önizleme',
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -331,7 +343,7 @@ class _AESMediaPageState extends State<AESMediaPage> {
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: Image.file(
-                _previewImage!,
+                _normalPreview!,
                 fit: BoxFit.contain,
                 height: 200,
                 width: double.infinity,
@@ -343,7 +355,41 @@ class _AESMediaPageState extends State<AESMediaPage> {
     );
   }
 
-  Widget _buildOutputCard() {
+  Widget _buildEncryptedMediaCard() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lock, color: Colors.orange[700]),
+                const SizedBox(width: 8),
+                Text(
+                  'Şifrelenmiş Medya',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange[700],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Bu medya dosyası şifrelenmiş görünüyor. Doğru veri kaynaklarıyla şifresini çözebilirsiniz.',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEncryptedDataCard() {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -357,7 +403,7 @@ class _AESMediaPageState extends State<AESMediaPage> {
                 Icon(Icons.lock, color: Colors.blue[700]),
                 const SizedBox(width: 8),
                 Text(
-                  'Şifrelenmiş Dosya',
+                  'Şifrelenmiş Veri',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -367,40 +413,39 @@ class _AESMediaPageState extends State<AESMediaPage> {
               ],
             ),
             const SizedBox(height: 16),
-            if (_outputFile != null) ...[
-              FutureBuilder<Uint8List>(
-                future: _outputFile!.readAsBytes(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasData) {
-                    final data = snapshot.data!;
-                    final preview = base64Encode(data);
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Dosya Adı: ${_outputFile!.path.split('/').last}',
-                          style: const TextStyle(fontWeight: FontWeight.w500),
+            FutureBuilder<Uint8List>(
+              future: _encryptedFile!.readAsBytes(),
+              builder: (context, snapshot) {
+                if (snapshot.hasData) {
+                  final data = snapshot.data!;
+                  final preview = base64Encode(data);
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Dosya Adı: ${_encryptedFile!.path.split('/').last}',
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      Text('Boyut: ${_formatSize(data.length)}'),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Şifrelenmiş Veri Önizleme:',
+                        style: TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 8),
+                      GestureDetector(
+                        onTap: () => _showFullPreview(
+                          data,
+                          _encryptedFile!.path.split('/').last,
                         ),
-                        Text('Boyut: ${_formatSize(data.length)}'),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'Şifrelenmiş Veri Önizleme:',
-                          style: TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                        const SizedBox(height: 8),
-                        GestureDetector(
-                          onTap: () => _showFullPreview(
-                            data,
-                            _outputFile!.path.split('/').last,
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.blue[200]!),
                           ),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[100],
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.blue[200]!),
-                            ),
-                            child: Column(
+                          child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
@@ -422,47 +467,84 @@ class _AESMediaPageState extends State<AESMediaPage> {
                                     ),
                                   ),
                                 ],
-                              ],
+                              ]),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _isProcessing ? null : _saveFile,
+                          icon: _isProcessing
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                        Colors.white),
+                                  ),
+                                )
+                              : const Icon(Icons.save),
+                          label: Text(
+                              _isProcessing ? 'Kaydediliyor...' : 'Kaydet'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue[700],
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
                             ),
                           ),
                         ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: _isProcessing ? null : _saveFile,
-                            icon: _isProcessing
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                          Colors.white),
-                                    ),
-                                  )
-                                : const Icon(Icons.save),
-                            label: Text(
-                                _isProcessing ? 'Kaydediliyor...' : 'Kaydet'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue[700],
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 12,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  }
-                  return const CircularProgressIndicator();
-                },
+                      ),
+                    ],
+                  );
+                }
+                return const CircularProgressIndicator();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDecryptedPreviewCard() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lock_open, color: Colors.green[700]),
+                const SizedBox(width: 8),
+                Text(
+                  'Çözülmüş Medya',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green[700],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.file(
+                _decryptedPreview!,
+                fit: BoxFit.contain,
+                height: 200,
+                width: double.infinity,
               ),
-            ],
+            ),
           ],
         ),
       ),
@@ -527,60 +609,55 @@ class _AESMediaPageState extends State<AESMediaPage> {
     );
   }
 
-  Future<void> _saveFile() async {
-    if (_outputFile == null || !mounted) return;
+  Future<void> _selectMedia() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'mp3', 'wav'],
+      );
+
+      if (result != null && mounted) {
+        setState(() {
+          _selectedMediaPath = result.files.single.path!;
+          _normalPreview = null;
+          _isEncryptedMedia = false;
+          _encryptedFile = null;
+          _decryptedPreview = null;
+        });
+        await _generatePreview();
+      }
+    } catch (e) {
+      if (mounted) {
+        _showMessage('Medya seçiminde hata: $e');
+      }
+    }
+  }
+
+  Future<void> _generatePreview() async {
+    if (_selectedMediaPath.isEmpty) return;
 
     try {
-      setState(() => _isProcessing = true);
+      final extension = _selectedMediaPath.split('.').last.toLowerCase();
+      if (['jpg', 'jpeg', 'png'].contains(extension)) {
+        final file = File(_selectedMediaPath);
+        final bytes = await file.readAsBytes();
 
-      // Dosya içeriğini oku
-      final bytes = await _outputFile!.readAsBytes();
-      if (bytes.isEmpty) {
-        throw Exception('Dosya boş veya okunamadı');
-      }
-
-      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-      final String originalFileName = _outputFile!.path.split('/').last;
-      final String newFileName = 'encrypted_${timestamp}_$originalFileName';
-
-      // Android için
-      if (Platform.isAndroid) {
-        final directory = await getExternalStorageDirectory();
-        if (directory != null) {
-          final downloadDir = Directory('${directory.path}/Download');
-          if (!await downloadDir.exists()) {
-            await downloadDir.create(recursive: true);
-          }
-
-          final File newFile = File('${downloadDir.path}/$newFileName');
-          await newFile.writeAsBytes(bytes);
-
-          if (mounted) {
-            _showMessage('Dosya kaydedildi: ${newFile.path}');
-          }
-        } else {
-          throw Exception('Depolama dizini bulunamadı');
-        }
-      }
-      // iOS için
-      else {
-        final directory = await getApplicationDocumentsDirectory();
-        final File newFile = File('${directory.path}/$newFileName');
-        await newFile.writeAsBytes(bytes);
-
-        if (mounted) {
-          _showMessage('Dosya kaydedildi: ${newFile.path}');
+        // Şifrelenmiş dosya kontrolü
+        try {
+          await decodeImage(bytes);
+          setState(() {
+            _normalPreview = file;
+            _isEncryptedMedia = false;
+          });
+        } catch (e) {
+          setState(() {
+            _normalPreview = null;
+            _isEncryptedMedia = true;
+          });
         }
       }
     } catch (e) {
-      debugPrint('Dosya kaydetme hatası: $e');
-      if (mounted) {
-        _showMessage('Dosya kaydedilemedi: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
+      debugPrint('Önizleme oluşturmada hata: $e');
     }
   }
 
@@ -604,7 +681,7 @@ class _AESMediaPageState extends State<AESMediaPage> {
           _selectedDataSources.map((source) => source.values.first).toList();
       _aesService.generateKeyFromSources(sourceKeys);
 
-      final mediaFile = File(_selectedMediaPath);
+      final mediaFile = _encryptedFile ?? File(_selectedMediaPath);
       final mediaBytes = await mediaFile.readAsBytes();
 
       Uint8List processedBytes;
@@ -618,15 +695,18 @@ class _AESMediaPageState extends State<AESMediaPage> {
       final fileName = '${encrypt ? 'encrypted' : 'decrypted'}_file.$extension';
 
       final tempDir = await getTemporaryDirectory();
-      _outputFile = File('${tempDir.path}/$fileName');
-      await _outputFile!.writeAsBytes(processedBytes);
+      final outputFile = File('${tempDir.path}/$fileName');
+      await outputFile.writeAsBytes(processedBytes);
 
       if (mounted) {
         setState(() {
-          _showEncryptedPreview = encrypt;
-          if (!encrypt &&
-              ['jpg', 'jpeg', 'png'].contains(extension.toLowerCase())) {
-            _previewImage = _outputFile;
+          if (encrypt) {
+            _encryptedFile = outputFile;
+            _decryptedPreview = null;
+          } else {
+            if (['jpg', 'jpeg', 'png'].contains(extension.toLowerCase())) {
+              _decryptedPreview = outputFile;
+            }
           }
         });
         _showMessage('${encrypt ? 'Şifreleme' : 'Şifre çözme'} tamamlandı');
@@ -635,6 +715,57 @@ class _AESMediaPageState extends State<AESMediaPage> {
       debugPrint('İşlem hatası: $e');
       if (mounted) {
         _showMessage('İşlem sırasında hata oluştu: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+    }
+  }
+
+  Future<void> _saveFile() async {
+    if (_encryptedFile == null || !mounted) return;
+
+    try {
+      setState(() => _isProcessing = true);
+
+      final bytes = await _encryptedFile!.readAsBytes();
+      if (bytes.isEmpty) {
+        throw Exception('Dosya boş veya okunamadı');
+      }
+
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final String originalFileName = _encryptedFile!.path.split('/').last;
+      final String newFileName = 'encrypted_${timestamp}_$originalFileName';
+
+      if (Platform.isAndroid) {
+        const downloadPath = '/storage/emulated/0/Download';
+        final downloadDir = Directory(downloadPath);
+
+        if (!await downloadDir.exists()) {
+          await downloadDir.create(recursive: true);
+        }
+
+        final File newFile = File('$downloadPath/$newFileName');
+        await newFile.writeAsBytes(bytes);
+
+        if (mounted) {
+          _showMessage(
+              'Dosya indirilenler klasörüne kaydedildi: ${newFile.path}');
+        }
+      } else {
+        final directory = await getApplicationDocumentsDirectory();
+        final File newFile = File('${directory.path}/$newFileName');
+        await newFile.writeAsBytes(bytes);
+
+        if (mounted) {
+          _showMessage('Dosya kaydedildi: ${newFile.path}');
+        }
+      }
+    } catch (e) {
+      debugPrint('Dosya kaydetme hatası: $e');
+      if (mounted) {
+        _showMessage('Dosya kaydedilemedi: $e');
       }
     } finally {
       if (mounted) {
@@ -801,6 +932,9 @@ class _AESMediaPageState extends State<AESMediaPage> {
         setState(() {
           _selectedDataSources.add({'Barkod': barcodeBytes});
         });
+        setState(() {
+          _selectedDataSources.add({'Barkod': barcodeBytes});
+        });
         _showMessage('Barkod başarıyla okundu');
       }
     } catch (e) {
@@ -821,10 +955,17 @@ class _AESMediaPageState extends State<AESMediaPage> {
 
       if (image != null && mounted) {
         var imageBytes = await image.readAsBytes();
-        setState(() {
-          _selectedDataSources.add({'Görüntü': imageBytes});
-        });
-        _showMessage('Görüntü başarıyla eklendi');
+
+        // Şifrelenmiş dosya kontrolü
+        try {
+          await decodeImage(imageBytes);
+          setState(() {
+            _selectedDataSources.add({'Görüntü': imageBytes});
+          });
+          _showMessage('Görüntü başarıyla eklendi');
+        } catch (e) {
+          _showMessage('Bu görüntü şifrelenmiş veya hasarlı olabilir');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -854,42 +995,10 @@ class _AESMediaPageState extends State<AESMediaPage> {
     }
   }
 
-  Future<void> _selectMedia() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['jpg', 'jpeg', 'png', 'mp3', 'wav'],
-      );
-
-      if (result != null && mounted) {
-        setState(() {
-          _selectedMediaPath = result.files.single.path!;
-          _outputFile = null;
-          _showEncryptedPreview = false;
-          _previewImage = null;
-        });
-        await _generatePreview();
-      }
-    } catch (e) {
-      if (mounted) {
-        _showMessage('Medya seçiminde hata: $e');
-      }
-    }
-  }
-
-  Future<void> _generatePreview() async {
-    if (_selectedMediaPath.isEmpty) return;
-
-    try {
-      final extension = _selectedMediaPath.split('.').last.toLowerCase();
-      if (['jpg', 'jpeg', 'png'].contains(extension)) {
-        setState(() {
-          _previewImage = File(_selectedMediaPath);
-        });
-      }
-    } catch (e) {
-      debugPrint('Önizleme oluşturmada hata: $e');
-    }
+  // Görüntü decode edilebilir mi kontrolü için yardımcı fonksiyon
+  Future<void> decodeImage(Uint8List bytes) async {
+    final codec = await instantiateImageCodec(bytes);
+    await codec.getNextFrame();
   }
 
   void _showFullPreview(Uint8List data, String fileName) {
