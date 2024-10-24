@@ -8,6 +8,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:just_audio/just_audio.dart';
 import '../services/aes.service.dart';
 import 'scanner.dart';
 
@@ -20,8 +21,10 @@ class AESMediaPage extends StatefulWidget {
 
 class _AESMediaPageState extends State<AESMediaPage> {
   final AESService _aesService = AESService(keySize: 128);
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioPlayer _decryptedAudioPlayer = AudioPlayer();
+
   String _selectedMediaPath = '';
-  File? _normalPreview;
   bool _isEncryptedMedia = false;
   File? _encryptedFile;
   File? _decryptedPreview;
@@ -29,11 +32,94 @@ class _AESMediaPageState extends State<AESMediaPage> {
   final List<Map<String, Uint8List>> _selectedDataSources = [];
   bool _isProcessing = false;
 
+  bool _isAudioPlaying = false;
+  Duration _audioDuration = Duration.zero;
+  Duration _audioPosition = Duration.zero;
+  bool _isAudioLoaded = false;
+
+  Duration _decryptedAudioDuration = Duration.zero;
+  Duration _decryptedAudioPosition = Duration.zero;
+  bool _isDecryptedPlaying = false;
+  bool _isDecryptedAudioLoaded = false;
+  String? _decryptedAudioFilePath;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupAudioPlayer();
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    _decryptedAudioPlayer.dispose();
+    super.dispose();
+  }
+
+  void _setupAudioPlayer() {
+    _audioPlayer.playerStateStream.listen((state) {
+      if (mounted) {
+        setState(() {
+          _isAudioPlaying = state.playing;
+        });
+      }
+    });
+
+    _audioPlayer.positionStream.listen((position) {
+      if (mounted) {
+        setState(() {
+          _audioPosition = position;
+        });
+      }
+    });
+
+    _audioPlayer.durationStream.listen((duration) {
+      if (mounted && duration != null) {
+        setState(() {
+          _audioDuration = duration;
+        });
+      }
+    });
+  }
+
+  void _setupDecryptedPlayer() {
+    _decryptedAudioPlayer.positionStream.listen((position) {
+      if (mounted) {
+        setState(() {
+          _decryptedAudioPosition = position;
+        });
+      }
+    });
+
+    _decryptedAudioPlayer.durationStream.listen((duration) {
+      if (mounted && duration != null) {
+        setState(() {
+          _decryptedAudioDuration = duration;
+        });
+      }
+    });
+
+    _decryptedAudioPlayer.playerStateStream.listen((state) {
+      if (mounted) {
+        setState(() {
+          _isDecryptedPlaying = state.playing;
+        });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Medya Şifreleme'),
+        title: Text(
+          'AES',
+          style: Theme.of(context)
+              .textTheme
+              .headlineLarge!
+              .copyWith(color: Colors.white),
+        ),
+        centerTitle: true,
         backgroundColor: Colors.blue[700],
         elevation: 0,
       ),
@@ -61,9 +147,10 @@ class _AESMediaPageState extends State<AESMediaPage> {
                 _buildSourcesCard(),
                 const SizedBox(height: 16),
                 _buildMediaCard(),
-                if (_normalPreview != null) ...[
+                if (!_isEncryptedMedia &&
+                    (_isAudioLoaded || _selectedMediaPath.isNotEmpty)) ...[
                   const SizedBox(height: 16),
-                  _buildNormalPreviewCard(),
+                  _buildPreviewCard(),
                 ],
                 if (_isEncryptedMedia) ...[
                   const SizedBox(height: 16),
@@ -73,7 +160,7 @@ class _AESMediaPageState extends State<AESMediaPage> {
                   const SizedBox(height: 16),
                   _buildEncryptedDataCard(),
                 ],
-                if (_decryptedPreview != null) ...[
+                if (_decryptedPreview != null || _isDecryptedAudioLoaded) ...[
                   const SizedBox(height: 16),
                   _buildDecryptedPreviewCard(),
                 ],
@@ -322,7 +409,10 @@ class _AESMediaPageState extends State<AESMediaPage> {
     );
   }
 
-  Widget _buildNormalPreviewCard() {
+  Widget _buildPreviewCard() {
+    final extension = _selectedMediaPath.split('.').last.toLowerCase();
+    final isAudio = ['mp3', 'wav'].contains(extension);
+
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -340,15 +430,54 @@ class _AESMediaPageState extends State<AESMediaPage> {
               ),
             ),
             const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.file(
-                _normalPreview!,
-                fit: BoxFit.contain,
-                height: 200,
-                width: double.infinity,
+            if (isAudio && _isAudioLoaded) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      _isAudioPlaying ? Icons.pause_circle : Icons.play_circle,
+                      size: 48,
+                      color: Colors.blue[700],
+                    ),
+                    onPressed: () {
+                      if (_isAudioPlaying) {
+                        _audioPlayer.pause();
+                      } else {
+                        _audioPlayer.play();
+                      }
+                    },
+                  ),
+                ],
               ),
-            ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text(_formatDuration(_audioPosition)),
+                  Expanded(
+                    child: Slider(
+                      value: _audioPosition.inSeconds.toDouble(),
+                      min: 0,
+                      max: _audioDuration.inSeconds.toDouble(),
+                      onChanged: (value) {
+                        _audioPlayer.seek(Duration(seconds: value.toInt()));
+                      },
+                    ),
+                  ),
+                  Text(_formatDuration(_audioDuration)),
+                ],
+              ),
+            ] else if (!isAudio && !_isEncryptedMedia) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.file(
+                  File(_selectedMediaPath),
+                  fit: BoxFit.contain,
+                  height: 200,
+                  width: double.infinity,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -485,9 +614,17 @@ class _AESMediaPageState extends State<AESMediaPage> {
                                         Colors.white),
                                   ),
                                 )
-                              : const Icon(Icons.save),
+                              : const Icon(
+                                  Icons.save,
+                                  color: Colors.white,
+                                ),
                           label: Text(
-                              _isProcessing ? 'Kaydediliyor...' : 'Kaydet'),
+                            _isProcessing ? 'Kaydediliyor...' : 'Kaydet',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium!
+                                .copyWith(color: Colors.white),
+                          ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.blue[700],
                             padding: const EdgeInsets.symmetric(
@@ -513,6 +650,9 @@ class _AESMediaPageState extends State<AESMediaPage> {
   }
 
   Widget _buildDecryptedPreviewCard() {
+    final extension = _selectedMediaPath.split('.').last.toLowerCase();
+    final isAudio = ['mp3', 'wav'].contains(extension);
+
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -536,18 +676,171 @@ class _AESMediaPageState extends State<AESMediaPage> {
               ],
             ),
             const SizedBox(height: 16),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.file(
-                _decryptedPreview!,
-                fit: BoxFit.contain,
-                height: 200,
-                width: double.infinity,
+            if (isAudio && _isDecryptedAudioLoaded)
+              FutureBuilder<Uint8List>(
+                  future: File(_decryptedAudioFilePath!).readAsBytes(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData) {
+                      return FutureBuilder<bool>(
+                          future: isValidDecodedAudio(snapshot.data!),
+                          builder: (context, validSnapshot) {
+                            if (validSnapshot.hasData && validSnapshot.data!) {
+                              return Column(
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(
+                                          _isDecryptedPlaying
+                                              ? Icons.pause_circle
+                                              : Icons.play_circle,
+                                          size: 48,
+                                          color: Colors.green[700],
+                                        ),
+                                        onPressed: () {
+                                          if (_isDecryptedPlaying) {
+                                            _decryptedAudioPlayer.pause();
+                                          } else {
+                                            _decryptedAudioPlayer.play();
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Text(_formatDuration(
+                                          _decryptedAudioPosition)),
+                                      Expanded(
+                                        child: Slider(
+                                          value: _decryptedAudioPosition
+                                              .inSeconds
+                                              .toDouble(),
+                                          min: 0,
+                                          max: _decryptedAudioDuration.inSeconds
+                                              .toDouble(),
+                                          activeColor: Colors.green[700],
+                                          onChanged: (value) {
+                                            _decryptedAudioPlayer.seek(Duration(
+                                                seconds: value.toInt()));
+                                          },
+                                        ),
+                                      ),
+                                      Text(_formatDuration(
+                                          _decryptedAudioDuration)),
+                                    ],
+                                  ),
+                                ],
+                              );
+                            } else {
+                              return _buildStillEncryptedMessage();
+                            }
+                          });
+                    }
+                    return const Center(child: CircularProgressIndicator());
+                  })
+            else if (!isAudio && _decryptedPreview != null)
+              FutureBuilder<Uint8List>(
+                future: _decryptedPreview!.readAsBytes(),
+                builder: (context, snapshot) {
+                  if (snapshot.hasData) {
+                    return FutureBuilder<bool>(
+                      future: isValidDecodedImage(snapshot.data!),
+                      builder: (context, validSnapshot) {
+                        if (validSnapshot.hasData && validSnapshot.data!) {
+                          return ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.memory(
+                              snapshot.data!,
+                              fit: BoxFit.contain,
+                              height: 200,
+                              width: double.infinity,
+                              errorBuilder: (context, error, stackTrace) {
+                                final preview = base64Encode(snapshot.data!);
+                                return Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[100],
+                                    borderRadius: BorderRadius.circular(8),
+                                    border:
+                                        Border.all(color: Colors.orange[200]!),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(Icons.lock,
+                                              color: Colors.orange[700]),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Medya Hala Şifreli',
+                                            style: TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.orange[700],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        preview.length > 100
+                                            ? '${preview.substring(0, 100)}...'
+                                            : preview,
+                                        style: const TextStyle(
+                                          fontFamily: 'monospace',
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          );
+                        } else {
+                          return _buildStillEncryptedMessage();
+                        }
+                      },
+                    );
+                  }
+                  return const Center(child: CircularProgressIndicator());
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStillEncryptedMessage() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.lock, color: Colors.orange[700]),
+            const SizedBox(width: 8),
+            Text(
+              'Medya Hala Şifreli',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.orange[700],
               ),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 8),
+        Text(
+          'Bu medya dosyası şifrelenmiş görünüyor. Doğru veri kaynaklarıyla şifresini çözebilirsiniz.',
+          style: TextStyle(color: Colors.grey[600]),
+        ),
+      ],
     );
   }
 
@@ -575,8 +868,17 @@ class _AESMediaPageState extends State<AESMediaPage> {
                       ),
                     ),
                   )
-                : const Icon(Icons.lock),
-            label: Text(_isProcessing ? 'Şifreleniyor...' : 'Şifrele'),
+                : const Icon(
+                    Icons.lock,
+                    color: Colors.white,
+                  ),
+            label: Text(
+              _isProcessing ? 'Şifreleniyor...' : 'Şifrele',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium!
+                  .copyWith(color: Colors.white),
+            ),
           ),
         ),
         const SizedBox(width: 16),
@@ -601,8 +903,18 @@ class _AESMediaPageState extends State<AESMediaPage> {
                       ),
                     ),
                   )
-                : const Icon(Icons.lock_open),
-            label: Text(_isProcessing ? 'Çözülüyor...' : 'Şifre Çöz'),
+                : const Icon(Icons.lock_open, color: Colors.white),
+            label: Text(
+              _isProcessing
+                  ? 'Çözülüyor...'
+                  : _encryptedFile != null
+                      ? 'Sonucu Çöz'
+                      : 'Şifre Çöz',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium!
+                  .copyWith(color: Colors.white),
+            ),
           ),
         ),
       ],
@@ -611,6 +923,8 @@ class _AESMediaPageState extends State<AESMediaPage> {
 
   Future<void> _selectMedia() async {
     try {
+      await _audioPlayer.stop();
+
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['jpg', 'jpeg', 'png', 'mp3', 'wav'],
@@ -619,10 +933,15 @@ class _AESMediaPageState extends State<AESMediaPage> {
       if (result != null && mounted) {
         setState(() {
           _selectedMediaPath = result.files.single.path!;
-          _normalPreview = null;
           _isEncryptedMedia = false;
           _encryptedFile = null;
           _decryptedPreview = null;
+          _isAudioLoaded = false;
+          _audioPosition = Duration.zero;
+          _audioDuration = Duration.zero;
+          _isDecryptedAudioLoaded = false;
+          _decryptedAudioDuration = Duration.zero;
+          _decryptedAudioPosition = Duration.zero;
         });
         await _generatePreview();
       }
@@ -638,20 +957,26 @@ class _AESMediaPageState extends State<AESMediaPage> {
 
     try {
       final extension = _selectedMediaPath.split('.').last.toLowerCase();
-      if (['jpg', 'jpeg', 'png'].contains(extension)) {
-        final file = File(_selectedMediaPath);
-        final bytes = await file.readAsBytes();
+      final file = File(_selectedMediaPath);
+      final bytes = await file.readAsBytes();
 
-        // Şifrelenmiş dosya kontrolü
+      if (['jpg', 'jpeg', 'png'].contains(extension)) {
         try {
           await decodeImage(bytes);
+          setState(() => _isEncryptedMedia = false);
+        } catch (e) {
+          setState(() => _isEncryptedMedia = true);
+        }
+      } else if (['mp3', 'wav'].contains(extension)) {
+        try {
+          await _audioPlayer.setFilePath(_selectedMediaPath);
           setState(() {
-            _normalPreview = file;
+            _isAudioLoaded = true;
             _isEncryptedMedia = false;
           });
         } catch (e) {
           setState(() {
-            _normalPreview = null;
+            _isAudioLoaded = false;
             _isEncryptedMedia = true;
           });
         }
@@ -672,9 +997,25 @@ class _AESMediaPageState extends State<AESMediaPage> {
       return;
     }
 
-    setState(() => _isProcessing = true);
-
     try {
+      if ((encrypt && _encryptedFile != null)) {
+        setState(() {
+          _decryptedPreview = null;
+          _isDecryptedAudioLoaded = false;
+          _decryptedAudioPosition = Duration.zero;
+          _decryptedAudioDuration = Duration.zero;
+        });
+        if (_audioPlayer.playing || _decryptedAudioPlayer.playing) {
+          await _audioPlayer.stop();
+          await _decryptedAudioPlayer.stop();
+        }
+        _showMessage('Şifreleme tamamlandı');
+        return;
+      }
+
+      setState(() => _isProcessing = true);
+
+      await _audioPlayer.stop();
       _aesService.changeSecurityLevel(_selectedSecurityLevel);
 
       List<Uint8List> sourceKeys =
@@ -687,8 +1028,13 @@ class _AESMediaPageState extends State<AESMediaPage> {
       Uint8List processedBytes;
       if (encrypt) {
         processedBytes = await _aesService.encryptFile(mediaBytes);
+
+        setState(() {
+          _decryptedPreview = null;
+        });
       } else {
         processedBytes = await _aesService.decryptFile(mediaBytes);
+        _setupDecryptedPlayer();
       }
 
       final extension = _selectedMediaPath.split('.').last;
@@ -701,10 +1047,16 @@ class _AESMediaPageState extends State<AESMediaPage> {
       if (mounted) {
         setState(() {
           if (encrypt) {
-            _encryptedFile = outputFile;
             _decryptedPreview = null;
+            _isDecryptedAudioLoaded = false;
+            _decryptedAudioPosition = Duration.zero;
+            _decryptedAudioDuration = Duration.zero;
+            _encryptedFile = outputFile;
           } else {
-            if (['jpg', 'jpeg', 'png'].contains(extension.toLowerCase())) {
+            final isAudio = ['mp3', 'wav'].contains(extension.toLowerCase());
+            if (isAudio) {
+              _initializeDecryptedAudio(outputFile);
+            } else {
               _decryptedPreview = outputFile;
             }
           }
@@ -721,6 +1073,19 @@ class _AESMediaPageState extends State<AESMediaPage> {
         setState(() => _isProcessing = false);
       }
     }
+  }
+
+  Future<void> _initializeDecryptedAudio(File audioFile) async {
+    try {
+      await _decryptedAudioPlayer.setFilePath(audioFile.path);
+    } catch (e) {
+      debugPrint('Ses dosyası hala şifreli: $e');
+      _showMessage('Ses dosyası hala şifreli');
+    }
+    setState(() {
+      _isDecryptedAudioLoaded = true;
+      _decryptedAudioFilePath = audioFile.path;
+    });
   }
 
   Future<void> _saveFile() async {
@@ -932,9 +1297,6 @@ class _AESMediaPageState extends State<AESMediaPage> {
         setState(() {
           _selectedDataSources.add({'Barkod': barcodeBytes});
         });
-        setState(() {
-          _selectedDataSources.add({'Barkod': barcodeBytes});
-        });
         _showMessage('Barkod başarıyla okundu');
       }
     } catch (e) {
@@ -956,7 +1318,6 @@ class _AESMediaPageState extends State<AESMediaPage> {
       if (image != null && mounted) {
         var imageBytes = await image.readAsBytes();
 
-        // Şifrelenmiş dosya kontrolü
         try {
           await decodeImage(imageBytes);
           setState(() {
@@ -995,7 +1356,6 @@ class _AESMediaPageState extends State<AESMediaPage> {
     }
   }
 
-  // Görüntü decode edilebilir mi kontrolü için yardımcı fonksiyon
   Future<void> decodeImage(Uint8List bytes) async {
     final codec = await instantiateImageCodec(bytes);
     await codec.getNextFrame();
@@ -1051,6 +1411,13 @@ class _AESMediaPageState extends State<AESMediaPage> {
     );
   }
 
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
+  }
+
   String _formatSize(int bytes) {
     if (bytes <= 0) return '0 B';
     const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1097,5 +1464,52 @@ class _AESMediaPageState extends State<AESMediaPage> {
         ),
       ),
     );
+  }
+
+  Future<bool> isValidDecodedImage(Uint8List bytes) async {
+    try {
+      if (bytes.length > 8 &&
+          bytes[0] == 0x89 &&
+          bytes[1] == 0x50 &&
+          bytes[2] == 0x4E &&
+          bytes[3] == 0x47) {
+        return true;
+      }
+
+      if (bytes.length > 3 &&
+          bytes[0] == 0xFF &&
+          bytes[1] == 0xD8 &&
+          bytes[2] == 0xFF) {
+        return true;
+      }
+
+      final codec = await instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      return frame.image.height >= 16 && frame.image.width >= 16;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<bool> isValidDecodedAudio(Uint8List bytes) async {
+    try {
+      if (bytes.length > 12 &&
+          bytes[0] == 0x52 &&
+          bytes[1] == 0x49 &&
+          bytes[2] == 0x46 &&
+          bytes[3] == 0x46) {
+        return true;
+      }
+
+      if (bytes.length > 3 &&
+          ((bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) ||
+              (bytes[0] == 0xFF && bytes[1] == 0xFB))) {
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      return false;
+    }
   }
 }
